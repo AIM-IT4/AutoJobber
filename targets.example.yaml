@@ -1,0 +1,19 @@
+# Optional explicit provider targets. If empty, the agent tries discovery via web search.
+companies:
+  - name: Morgan Stanley
+    provider: eightfold
+    base_url: https://morganstanley.eightfold.ai
+    domain: morganstanley.com
+    location: Mumbai
+
+  - name: Boeing
+    provider: workday
+    careers_url: https://boeing.wd1.myworkdayjobs.com/EXTERNAL_CAREERS
+
+  - name: OpenAI
+    provider: greenhouse
+    board_token: openai
+
+  - name: Stripe
+    provider: lever
+    company_slug: stripe

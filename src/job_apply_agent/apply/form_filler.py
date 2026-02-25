@@ -29,6 +29,7 @@ FIELD_KEYWORDS = {
     "address_line1": ["address line 1", "street address", "address 1"],
     "address_line2": ["address line 2", "apartment", "suite", "address 2"],
     "postal_code": ["postal code", "zip code", "zip", "pin code", "pincode"],
+    "gender": ["gender"],
     "heard_about": ["how did you hear", "hear about us", "source"],
     "previous_worker": ["previously worked at morgan stanley", "previously worked"],
     "linkedin": ["linkedin"],
@@ -66,6 +67,22 @@ class FormFiller:
                 previous_worker_answer = str(answer)
                 break
 
+        phone_type_raw = str(contact.get("phone_type", "Cell")).strip()
+        phone_type_norm = phone_type_raw.lower()
+        phone_type_value = phone_type_raw or "Mobile"
+        if phone_type_norm in {"cell", "cell phone", "cellphone", "mobile phone"}:
+            phone_type_value = "Mobile"
+        elif phone_type_norm in {"work", "business"}:
+            phone_type_value = "Work"
+        elif phone_type_norm in {"home", "residential"}:
+            phone_type_value = "Home"
+
+        retention_pref_raw = str(profile.get("data_retention_preference", "keep_24_months")).strip().lower()
+        if any(token in retention_pref_raw for token in ("delete", "remove", "purge")):
+            data_retention_value = "deleted at the end of the application process"
+        else:
+            data_retention_value = "kept for 24 months"
+
         self.values = {
             "first_name": str(person.get("first_name", "")),
             "last_name": str(person.get("last_name", "")),
@@ -73,7 +90,7 @@ class FormFiller:
             "password": str(profile.get("account_password", "")),
             "verify_password": str(profile.get("account_password", "")),
             "phone": str(contact.get("phone", "")),
-            "phone_type": str(contact.get("phone_type", "Cell")),
+            "phone_type": phone_type_value,
             "phone_extension": str(contact.get("phone_extension", "")),
             "phone_country_code": phone_country_code_value,
             "city": str(contact.get("city", "")),
@@ -82,6 +99,7 @@ class FormFiller:
             "address_line1": str(contact.get("address_line1", "")),
             "address_line2": str(contact.get("address_line2", "")),
             "postal_code": str(contact.get("postal_code", "")),
+            "gender": str(person.get("gender", "Not declared")),
             "linkedin": str(links.get("linkedin", "")),
             "github": str(links.get("github", "")),
             "portfolio": str(links.get("portfolio", "")),
@@ -91,6 +109,7 @@ class FormFiller:
             "agree_terms": "Yes",
             "heard_about": str(profile.get("heard_about", "LinkedIn")),
             "previous_worker": previous_worker_answer,
+            "data_retention_choice": data_retention_value,
         }
 
         self.resume_path = Path(str(profile.get("resume_path", ""))).expanduser()
@@ -148,18 +167,31 @@ class FormFiller:
             "li",
         ]
 
+        listbox_scopes: list[Locator] = []
+        try:
+            listboxes = self.page.locator("[role='listbox']")
+            for listbox in await self._visible_nodes(listboxes, max_items=6):
+                listbox_scopes.append(listbox)
+        except Exception:
+            listbox_scopes = []
+
         for pattern in patterns:
-            for selector in selectors:
-                try:
-                    options = self.page.locator(selector).filter(has_text=pattern)
-                except Exception:
-                    continue
-                for candidate in await self._visible_nodes(options, max_items=12):
+            search_roots = listbox_scopes or [None]
+            for root in search_roots:
+                for selector in selectors:
                     try:
-                        await candidate.click(force=True)
-                        return True
+                        if root is None:
+                            options = self.page.locator(selector).filter(has_text=pattern)
+                        else:
+                            options = root.locator(selector).filter(has_text=pattern)
                     except Exception:
                         continue
+                    for candidate in await self._visible_nodes(options, max_items=12):
+                        try:
+                            await candidate.click(force=True)
+                            return True
+                        except Exception:
+                            continue
         return False
 
     async def _value_applied(self, element: ElementHandle, expected: str, include_nearby: bool = True) -> bool:
@@ -198,6 +230,54 @@ class FormFiller:
                 return True
         return False
 
+    async def _dropdown_value_applied(self, element: ElementHandle, expected: str) -> bool:
+        target = self._normalize(expected)
+        if not target:
+            return False
+
+        try:
+            snapshot = await element.evaluate(
+                """
+                (el) => {
+                  const clean = (v) => (v || '').replace(/\\s+/g, ' ').trim();
+                  const direct = 'value' in el ? clean(el.value) : '';
+                  const text = clean(el.textContent);
+                  const aria = clean(el.getAttribute('aria-label'));
+                  const formField = el.closest('[data-automation-id^="formField-"], [data-fkit-id], div');
+                  const selected = formField
+                    ? Array.from(
+                        formField.querySelectorAll(
+                          "[data-automation-id='selectedItem'] [data-automation-id='promptOption'], " +
+                          "[data-automation-id='selectedItem']"
+                        )
+                      )
+                        .map((node) => clean(node.textContent))
+                        .filter(Boolean)
+                        .join(' ')
+                    : '';
+                  return { direct, text, aria, selected };
+                }
+                """
+            )
+        except Exception:
+            return False
+
+        candidates = [
+            self._normalize(str((snapshot or {}).get("direct", ""))),
+            self._normalize(str((snapshot or {}).get("text", ""))),
+            self._normalize(str((snapshot or {}).get("selected", ""))),
+        ]
+        aria_text = self._normalize(str((snapshot or {}).get("aria", "")))
+        if aria_text and "select one" not in aria_text:
+            candidates.append(aria_text)
+
+        for candidate in candidates:
+            if not candidate:
+                continue
+            if target == candidate or target in candidate or candidate in target:
+                return True
+        return False
+
     def _debug(self, message: str) -> None:
         if os.getenv("JOB_APPLY_DEBUG", "0").strip() not in {"1", "true", "yes"}:
             return
@@ -213,7 +293,7 @@ class FormFiller:
         if not value:
             return False
 
-        if await self._value_applied(element, value, include_nearby=False):
+        if await self._dropdown_value_applied(element, value):
             return False
 
         try:
@@ -254,7 +334,7 @@ class FormFiller:
         for _ in range(6):
             if await self._click_option(value):
                 await self.page.wait_for_timeout(150)
-                if await self._value_applied(element, value):
+                if await self._dropdown_value_applied(element, value):
                     self._debug(
                         f"custom_dropdown:option_click_success id={el_id} name={el_name} target={value!r}"
                     )
@@ -289,7 +369,7 @@ class FormFiller:
         except Exception:
             pass
 
-        applied = await self._value_applied(element, value)
+        applied = await self._dropdown_value_applied(element, value)
         try:
             after_text = str(await element.evaluate("(el) => (el.textContent || '').replace(/\\s+/g, ' ').trim()") or "")
         except Exception:
@@ -593,6 +673,27 @@ class FormFiller:
                 continue
             for prompt in await self._visible_nodes(prompts, max_items=5):
                 for container in await self._container_locators(prompt):
+                    is_state_container = False
+                    try:
+                        is_state_container = bool(
+                            await container.evaluate(
+                                """
+                                (el) => {
+                                  const own = `${el.getAttribute('data-automation-id') || ''} ${el.getAttribute('data-fkit-id') || ''}`.toLowerCase();
+                                  if (own.includes('state') || own.includes('province') || own.includes('region')) return true;
+                                  const stateLike = el.querySelector(
+                                    "[id*='state' i], [name*='state' i], [id*='province' i], [name*='province' i], " +
+                                    "[data-automation-id*='state' i], [data-fkit-id*='state' i]"
+                                  );
+                                  return !!stateLike;
+                                }
+                                """
+                            )
+                        )
+                    except Exception:
+                        is_state_container = False
+                    if not is_state_container:
+                        continue
                     if await self._select_inside(container, state_value):
                         self._state_fallback_done = True
                         return 1
@@ -678,6 +779,14 @@ class FormFiller:
             return self.values.get("heard_about", "")
         if "previously worked at morgan stanley" in normalized:
             return self.values.get("previous_worker", "No")
+        if "previously worked at" in normalized and (
+            "employee" in normalized or "contingent worker" in normalized
+        ):
+            return self.values.get("previous_worker", "No")
+        if "right to work" in normalized and "location you are applying" in normalized:
+            return self.values.get("authorized", "Yes")
+        if "please select one of the following options" in normalized:
+            return self.values.get("data_retention_choice", "kept for 24 months")
         if "legally authorized" in normalized or "authorized to work" in normalized:
             return self.values.get("authorized", "Yes")
         if "sponsor" in normalized or "sponsorship" in normalized or "visa" in normalized:
@@ -727,6 +836,33 @@ class FormFiller:
         field_meta = self._compact(f"{field_id} {field_name}")
         field_id_l = str(field_id or "").strip().lower()
         field_name_l = str(field_name or "").strip().lower()
+
+        # Prioritize explicit Workday field identities over broad label matching.
+        if field_id_l.endswith("source--source") or field_name_l == "source":
+            return self.values.get("heard_about", "")
+        if "candidateispreviousworker" in field_id_l or field_name_l == "candidateispreviousworker":
+            return self.values.get("previous_worker", "No")
+        # Known Deutsche Bank questionnaire ids (stable across DB Workday roles).
+        if field_id_l.endswith("562d2ca3bfaf015d3805e452e6011660") or field_name_l == "562d2ca3bfaf015d3805e452e6011660":
+            return self.values.get("authorized", "Yes")
+        if field_id_l.endswith("562d2ca3bfaf01b20035e452e6011c60") or field_name_l == "562d2ca3bfaf01b20035e452e6011c60":
+            return self.values.get("data_retention_choice", "kept for 24 months")
+        if field_name_l == "legalname--firstname" or (
+            "legalname--firstname" in field_id_l and "local" in field_id_l
+        ):
+            return self.values.get("first_name", "")
+        if field_name_l == "legalname--lastname" or (
+            "legalname--lastname" in field_id_l and "local" in field_id_l
+        ):
+            return self.values.get("last_name", "")
+        if field_name_l == "gender" or field_id_l.endswith("--gender") or "personalinfoperson--gender" in field_id_l:
+            return self.values.get("gender", "Not declared")
+        if field_name_l in {"email", "emailaddress"} or "email" in field_id_l:
+            return self.values.get("email", "")
+        if field_id_l.endswith("country--country") or field_name_l == "country":
+            return self.values.get("country", "")
+        if field_id_l.endswith("state--state") or field_name_l == "state":
+            return self.values.get("state", "")
 
         # Workday phone fields can share container text; prioritize exact ids/names first.
         if (
@@ -779,6 +915,11 @@ class FormFiller:
             if "united states" not in normalized:
                 return self.values.get("state", "")
 
+        # Prefer direct profile fields before free-form answer bank matching.
+        for field, keywords in FIELD_KEYWORDS.items():
+            if any(self._keyword_matches(normalized, keyword) for keyword in keywords):
+                return self.values.get(field, "")
+
         prompt_answer = self._default_answer_for_prompt(label)
         if prompt_answer:
             return prompt_answer
@@ -805,9 +946,6 @@ class FormFiller:
             if len(overlap) >= 5 and overlap_ratio >= 0.55:
                 return answer
 
-        for field, keywords in FIELD_KEYWORDS.items():
-            if any(self._keyword_matches(normalized, keyword) for keyword in keywords):
-                return self.values.get(field, "")
         return ""
 
     async def _apply_text(self, element: ElementHandle, value: str) -> bool:
@@ -980,6 +1118,25 @@ class FormFiller:
                     continue
                 if input_type == "button" and not is_custom_dropdown:
                     continue
+                # Workday dropdown internals include helper text inputs without stable ids/names.
+                # Filling those can consume values while leaving real required controls untouched.
+                if (
+                    tag_name == "input"
+                    and input_type in {"text", "search", ""}
+                    and not field_id
+                    and not field_name
+                ):
+                    parent_has_listbox = False
+                    try:
+                        parent_has_listbox = bool(
+                            await field.evaluate(
+                                "(el) => !!el.closest('[role=\"combobox\"], [aria-haspopup=\"listbox\"], [data-uxi-widget-type=\"selectinput\"]')"
+                            )
+                        )
+                    except Exception:
+                        parent_has_listbox = False
+                    if parent_has_listbox:
+                        continue
 
                 label = await self._field_label(field)
                 if not label:
@@ -1002,6 +1159,11 @@ class FormFiller:
                         field_id=field_id,
                         field_name=field_name,
                     )
+                self._debug(
+                    "field:resolve "
+                    f"id={field_id} name={field_name} type={input_type or tag_name} "
+                    f"label={label!r} value={value!r}"
+                )
                 if not value:
                     is_phone_extension = (
                         "phone extension" in self._normalize(label)
@@ -1069,6 +1231,11 @@ class FormFiller:
 
                 if applied:
                     count += 1
+                    self._debug(
+                        "field:applied "
+                        f"id={field_id} name={field_name} type={input_type or tag_name} "
+                        f"label={label!r} value={value!r}"
+                    )
                     if input_type != "file":
                         try:
                             if field_id.startswith("primaryQuestionnaire--") or field_name.startswith("adb"):
@@ -1078,6 +1245,11 @@ class FormFiller:
                         except Exception:
                             pass
                 else:
+                    self._debug(
+                        "field:not_applied "
+                        f"id={field_id} name={field_name} type={input_type or tag_name} "
+                        f"label={label!r} value={value!r}"
+                    )
                     if is_questionnaire:
                         self._debug(
                             f"questionnaire:not_applied id={field_id} name={field_name} label={label!r} value={value!r} type={input_type} popup={has_popup}"

@@ -881,7 +881,6 @@ class ApplicationEngine:
         started_at = time.time()
         current_page: Page | None = page
         trace: list[str] = []
-        step_fill_attempts: dict[str, int] = {}
         signin_attempts = 0
         signin_cooldown = 0
         create_account_fallback_used = False
@@ -902,8 +901,6 @@ class ApplicationEngine:
             except Exception:
                 current_url = ""
             active_step = await self._current_apply_step(page)
-            step_url = current_url.split("?", 1)[0]
-            step_key = f"{(active_step or 'unknown').strip().lower()}|{step_url}"
             step_norm = (active_step or "").strip().lower()
             if len(trace) < 80:
                 trace.append(f"iter={step_index}; step={active_step or 'unknown'}; url={current_url}")
@@ -1151,20 +1148,11 @@ class ApplicationEngine:
                     continue
 
             has_validation_errors = await self._has_validation_errors(page)
-            fill_budget = 3 if has_validation_errors else 1
-            fill_attempts = step_fill_attempts.get(step_key, 0)
-            filled_now = 0
-            if fill_attempts < fill_budget:
-                filled_now = await filler.fill_visible_fields()
-                filled_total += filled_now
-                step_fill_attempts[step_key] = fill_attempts + 1
-                if filled_now > 0 and len(trace) < 80:
-                    trace.append(
-                        f"iter={step_index}; action=fill; count={filled_now}; pass={fill_attempts + 1}; budget={fill_budget}"
-                    )
-            elif len(trace) < 80:
+            filled_now = await filler.fill_visible_fields()
+            filled_total += filled_now
+            if len(trace) < 80:
                 trace.append(
-                    f"iter={step_index}; action=fill_skip; pass={fill_attempts}; budget={fill_budget}"
+                    f"iter={step_index}; action=fill; count={filled_now}; validation_errors={has_validation_errors}"
                 )
 
             if not self.auto_submit:

@@ -521,9 +521,14 @@ def fetch_workday_jobs(
             break
 
         for posting in postings:
-            external_path = str(posting.get("externalPath") or "").lstrip("/")
-            if external_path:
-                job_url = f"{base_url}/{locale}/{site}/job/{external_path}"
+            external_path = str(posting.get("externalPath") or "").strip()
+            normalized_external_path = external_path.lstrip("/")
+            if normalized_external_path:
+                if normalized_external_path.lower().startswith("job/"):
+                    path_suffix = normalized_external_path
+                else:
+                    path_suffix = f"job/{normalized_external_path}"
+                job_url = f"{base_url}/{locale}/{site}/{path_suffix}"
             else:
                 job_url = careers_url
 
@@ -532,7 +537,7 @@ def fetch_workday_jobs(
             location_text = str(posting.get("locationsText") or posting.get("location") or "Unknown")
             if location_tokens and not any(token in location_text.lower() for token in location_tokens):
                 continue
-            posting_id = external_path or str(posting.get("title", ""))
+            posting_id = normalized_external_path or str(posting.get("title", ""))
 
             jobs.append(
                 JobPosting(

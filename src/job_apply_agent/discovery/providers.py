@@ -486,12 +486,20 @@ def fetch_workday_jobs(
     company: str,
     session: requests.Session | None = None,
     max_jobs: int = 400,
+    query: str = "",
+    location: str = "",
 ) -> list[JobPosting]:
     if not careers_url.strip():
         return []
 
     endpoint, base_url, locale, site = _workday_parts(careers_url)
     s = _build_session(session)
+    search_text = query.strip()
+    location_tokens = [
+        token.strip().lower()
+        for token in re.split(r"[,;/|]", location or "")
+        if token.strip()
+    ]
 
     jobs: list[JobPosting] = []
     offset = 0
@@ -502,7 +510,7 @@ def fetch_workday_jobs(
             "appliedFacets": {},
             "limit": limit,
             "offset": offset,
-            "searchText": "",
+            "searchText": search_text,
         }
         response = s.post(endpoint, json=payload, timeout=DEFAULT_TIMEOUT)
         response.raise_for_status()
@@ -521,7 +529,9 @@ def fetch_workday_jobs(
 
             bullet_fields = posting.get("bulletFields") or []
             description = " | ".join(str(item) for item in bullet_fields if item)
-            location = posting.get("locationsText") or posting.get("location") or "Unknown"
+            location_text = str(posting.get("locationsText") or posting.get("location") or "Unknown")
+            if location_tokens and not any(token in location_text.lower() for token in location_tokens):
+                continue
             posting_id = external_path or str(posting.get("title", ""))
 
             jobs.append(
@@ -529,7 +539,7 @@ def fetch_workday_jobs(
                     id=posting_id,
                     company=company,
                     title=str(posting.get("title") or ""),
-                    location=str(location),
+                    location=location_text,
                     url=job_url,
                     description=description,
                     source=f"workday:{site}",

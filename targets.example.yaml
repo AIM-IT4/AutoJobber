@@ -10,6 +10,10 @@ companies:
     provider: workday
     careers_url: https://boeing.wd1.myworkdayjobs.com/EXTERNAL_CAREERS
 
+  - name: Deutsche Bank
+    provider: workday
+    careers_url: https://db.wd3.myworkdayjobs.com/DBWebsite
+
   - name: OpenAI
     provider: greenhouse
     board_token: openai

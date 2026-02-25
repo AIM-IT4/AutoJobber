@@ -150,11 +150,15 @@ class DiscoveryService:
 
         if provider == "workday":
             careers_url = str(hint.get("careers_url", ""))
+            query = str(hint.get("query", "")).strip()
+            location = str(hint.get("location", "")).strip()
             return fetch_workday_jobs(
                 careers_url,
                 company,
                 session=session,
                 max_jobs=max_per_company,
+                query=query,
+                location=location,
             )
 
         if provider == "eightfold":
